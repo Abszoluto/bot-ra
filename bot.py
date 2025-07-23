@@ -115,25 +115,14 @@ class MusicBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"🤖 {self.user} está online e pronto!")
 
-    # -----------> INÍCIO DA CORREÇÃO <-----------
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
-        """
-        Evento chamado quando a conexão com um nó Lavalink é estabelecida com sucesso.
-        O argumento é um 'payload', que contém o nó (node) e o session_id.
-        """
         node = payload.node
         logger.info(f"✅ Conectado ao nó Lavalink '{node.identifier}' em {node.uri}")
-    # -----------> FIM DA CORREÇÃO <-----------
 
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
-        """
-        Evento chamado quando uma música termina.
-        Usa o payload para obter o player e o motivo do término.
-        """
         player = payload.player
         reason = payload.reason
-        if reason in (wavelink.TrackEndReason.FINISHED, wavelink.TrackEndReason.LOAD_FAILED):
-            # Acessa o canal de texto onde o player foi iniciado
+        if reason.should_play_next():
             text_channel = player.channel
             if text_channel:
                  await self.play_next_song(player, player.guild.id, text_channel)
@@ -144,23 +133,19 @@ class MusicBot(commands.Bot):
         player: wavelink.Player = member.guild.voice_client
         if not player or not before.channel: return
 
-        # Se o bot ficar sozinho no canal, inicia o timer de inatividade
         if len(before.channel.members) == 1 and self.user in before.channel.members:
             logger.info(f"Bot ficou sozinho no canal {before.channel.name}. Iniciando timer de desconexão.")
             self.start_inactivity_timer(member.guild.id, player)
         
-        # Se alguém entrar no canal onde o bot estava sozinho e inativo, para o timer
         elif after.channel == player.channel and self.user in after.channel.members:
             if member.guild.id in self.inactivity_timers:
                 logger.info(f"{member.name} entrou no canal. Parando timer de inatividade.")
                 self.stop_inactivity_timer(member.guild.id)
 
-
 # Inicializa a instância do bot
 bot = MusicBot()
 
 # --- Comandos de Barra (Slash Commands) ---
-# Note que usamos `interaction.client` para acessar os métodos e atributos do bot (como `song_queues`)
 
 @bot.tree.command(name="play", description="Toca uma música ou a adiciona à fila.")
 @app_commands.describe(query="Nome da música ou URL do YouTube/Spotify")
@@ -171,29 +156,43 @@ async def play(interaction: discord.Interaction, query: str):
         await interaction.followup.send("Você precisa estar em um canal de voz para usar este comando.")
         return
 
-    # Conecta ou move para o canal de voz do usuário
+    player: wavelink.Player
     try:
-        player: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+        player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
     except discord.ClientException:
-        player: wavelink.Player = interaction.guild.voice_client
-    
+        player = interaction.guild.voice_client
+
+    if not player:
+        await interaction.followup.send("Não foi possível conectar ao canal de voz.")
+        return
+        
     if player.channel != interaction.user.voice.channel:
         await player.move_to(interaction.user.voice.channel)
     
-    # Define o canal de texto para as respostas do bot
     player.channel = interaction.channel
-    
-    # Acessa os métodos do bot através de interaction.client
     interaction.client.stop_inactivity_timer(interaction.guild_id)
 
-    tracks: wavelink.Search = await wavelink.Playable.search(query)
-    if not tracks:
-        await interaction.followup.send(f"❌ Nenhuma música encontrada para '{query}'.")
+    # -----------> INÍCIO DA CORREÇÃO <-----------
+    try:
+        # Usamos `search` que retorna um objeto de pesquisa mais versátil
+        tracks: wavelink.Search = await wavelink.Playable.search(query)
+        if not tracks:
+            await interaction.followup.send(f"❌ Nenhuma música encontrada para '{query}'.")
+            return
+    except wavelink.LavalinkLoadException as e:
+        logger.error(f"Erro do Lavalink ao buscar a música: {e}")
+        await interaction.followup.send("❌ Ocorreu um erro ao tentar buscar a música. Verifique os logs do Lavalink.")
         return
+    except Exception as e:
+        logger.error(f"Um erro inesperado ocorreu durante a busca: {e}")
+        await interaction.followup.send("❌ Um erro inesperado ocorreu. Tente novamente.")
+        return
+    # -----------> FIM DA CORREÇÃO <-----------
 
+    # `search` pode retornar uma lista (playlist) ou um único resultado.
+    # Vamos pegar o primeiro resultado para simplificar.
     track = tracks[0]
     
-    # Acessa a fila de músicas através de interaction.client
     guild_id = interaction.guild_id
     if guild_id not in interaction.client.song_queues:
         interaction.client.song_queues[guild_id] = deque()
@@ -203,7 +202,6 @@ async def play(interaction: discord.Interaction, query: str):
     if player.is_playing() or player.is_paused():
         await interaction.followup.send(f"🎶 Adicionado à fila: **{track.title}**")
     else:
-        # A resposta será enviada dentro de play_next_song
         await interaction.followup.send(f"Buscando: **{track.title}**...")
         await interaction.client.play_next_song(player, guild_id, interaction.channel)
 
@@ -214,7 +212,7 @@ async def skip(interaction: discord.Interaction):
     if not player or not player.is_playing():
         return await interaction.response.send_message("Não há nada tocando para pular.")
     
-    await player.stop()
+    await player.skip(force=True)
     await interaction.response.send_message("⏭️ Música pulada.")
 
 @bot.tree.command(name="pause", description="Pausa a música atual.")
@@ -222,7 +220,7 @@ async def pause(interaction: discord.Interaction):
     player: wavelink.Player = interaction.guild.voice_client
     if not player or not player.is_playing():
         return await interaction.response.send_message("Não há nada tocando para pausar.")
-    await player.pause()
+    await player.pause(True)
     await interaction.response.send_message("⏸️ Reprodução pausada.")
 
 @bot.tree.command(name="resume", description="Retoma a música pausada.")
@@ -230,7 +228,7 @@ async def resume(interaction: discord.Interaction):
     player: wavelink.Player = interaction.guild.voice_client
     if not player or not player.is_paused():
         return await interaction.response.send_message("Não há nada pausado para retomar.")
-    await player.resume()
+    await player.pause(False)
     await interaction.response.send_message("▶️ Reprodução retomada.")
 
 @bot.tree.command(name="stop", description="Para a reprodução, limpa a fila e desconecta.")
