@@ -36,11 +36,19 @@ async def on_ready():
         print("Verifique também se o serviço Lavalink está rodando e acessível no Railway.")
 
 @bot.event
-async def on_wavelink_node_ready(node: wavelink.Node):
-    """
-    Evento disparado quando um nó Wavelink está pronto para uso.
-    """
-    print(f"Wavelink Node '{node.identifier}' está pronto!")
+async def on_ready():
+    print(f"🤖 Rã está online como {bot.user}")
+    try:
+        node = wavelink.Node(
+            uri=f"https://{LAVALINK_HOST}",  # sem porta aqui!
+            password=LAVALINK_PASSWORD,
+            secure=True,  # SSL é obrigatório para Railway (https)
+        )
+        await wavelink.Pool.connect(client=bot, nodes=[node])
+        print(f"✅ Conectado ao Lavalink em {LAVALINK_HOST}")
+    except Exception as e:
+        print(f"❌ Erro ao conectar ao Lavalink: {e}")
+
 
 @bot.command()
 async def play(ctx: commands.Context, *, query: str):
