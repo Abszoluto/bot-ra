@@ -115,12 +115,28 @@ class MusicBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"🤖 {self.user} está online e pronto!")
 
-    async def on_wavelink_node_ready(self, node: wavelink.Node):
+    # -----------> INÍCIO DA CORREÇÃO <-----------
+    async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
+        """
+        Evento chamado quando a conexão com um nó Lavalink é estabelecida com sucesso.
+        O argumento é um 'payload', que contém o nó (node) e o session_id.
+        """
+        node = payload.node
         logger.info(f"✅ Conectado ao nó Lavalink '{node.identifier}' em {node.uri}")
+    # -----------> FIM DA CORREÇÃO <-----------
 
-    async def on_wavelink_track_end(self, player: wavelink.Player, track: wavelink.Playable, reason):
+    async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
+        """
+        Evento chamado quando uma música termina.
+        Usa o payload para obter o player e o motivo do término.
+        """
+        player = payload.player
+        reason = payload.reason
         if reason in (wavelink.TrackEndReason.FINISHED, wavelink.TrackEndReason.LOAD_FAILED):
-            await self.play_next_song(player, player.guild.id, player.channel)
+            # Acessa o canal de texto onde o player foi iniciado
+            text_channel = player.channel
+            if text_channel:
+                 await self.play_next_song(player, player.guild.id, text_channel)
     
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         if member.bot: return
@@ -155,11 +171,17 @@ async def play(interaction: discord.Interaction, query: str):
         await interaction.followup.send("Você precisa estar em um canal de voz para usar este comando.")
         return
 
-    player: wavelink.Player = interaction.guild.voice_client
-    if not player:
-        player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
-    elif player.channel != interaction.user.voice.channel:
+    # Conecta ou move para o canal de voz do usuário
+    try:
+        player: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+    except discord.ClientException:
+        player: wavelink.Player = interaction.guild.voice_client
+    
+    if player.channel != interaction.user.voice.channel:
         await player.move_to(interaction.user.voice.channel)
+    
+    # Define o canal de texto para as respostas do bot
+    player.channel = interaction.channel
     
     # Acessa os métodos do bot através de interaction.client
     interaction.client.stop_inactivity_timer(interaction.guild_id)
