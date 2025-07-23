@@ -10,7 +10,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Pega dados das variáveis de ambiente (Railway)
 TOKEN = os.getenv("TOKEN")
 LAVALINK_HOST = os.getenv("LAVALINK_HOST") # Será o nome do serviço do Lavalink no Railway
-LAVALINK_PORT = int(os.getenv("LAVALINK_PORT")) # A porta interna do Lavalink
 LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD")
 
 @bot.event
