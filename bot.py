@@ -5,7 +5,8 @@ import wavelink
 
 # Configura as intenções do bot
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Alterado o prefixo do comando para '?'
+bot = commands.Bot(command_prefix="?", intents=intents) 
 
 # Pega dados das variáveis de ambiente (Railway)
 TOKEN = os.getenv("TOKEN")
@@ -17,19 +18,22 @@ LAVALINK_PORT = os.getenv("LAVALINK_PORT") # Adicione esta linha para pegar a po
 async def on_ready():
     """
     Evento que é disparado quando o bot está pronto e conectado ao Discord.
-    Aqui, ele tenta criar um nó Wavelink para se conectar ao servidor Lavalink.
+    Aqui, ele tenta criar um um nó Wavelink para se conectar ao servidor Lavalink.
     """
     print(f"🤖 Rã está online como {bot.user}")
     try:
-        # Em wavelink v3, wavelink.Node é usado para criar um nó.
-        # Para comunicação interna no Railway, use HTTP e a porta definida.
-        # Use o nome do serviço Lavalink como host e a porta interna.
-        node = wavelink.Node(
-            uri=f"http://{LAVALINK_HOST}:{LAVALINK_PORT}", # URI completa para o servidor Lavalink interno
+        # Utiliza wavelink.NodePool.create_node conforme o exemplo fornecido,
+        # mas com as variáveis de ambiente para host, porta e senha.
+        node = await wavelink.NodePool.create_node(
+            bot=bot,
+            host=LAVALINK_HOST,
+            port=int(LAVALINK_PORT), # Garante que a porta seja um inteiro
             password=LAVALINK_PASSWORD,
+            # Para comunicação interna no Railway, não é necessário SSL.
+            # Se o Lavalink estivesse configurado para SSL, você usaria `uri=f"https://{LAVALINK_HOST}:{LAVALINK_PORT}"`
+            # e talvez `secure=True` se o wavelink.NodePool.create_node suportasse diretamente.
+            # No entanto, para Railway, HTTP interno é o padrão e mais simples.
         )
-        # Conecta o nó ao pool de nós do Wavelink
-        await wavelink.Pool.connect(client=bot, nodes=[node])
         print(f"✅ Conectado ao Lavalink em {LAVALINK_HOST}:{LAVALINK_PORT}")
     except Exception as e:
         print(f"❌ Erro ao conectar ao Lavalink: {e}")
@@ -45,6 +49,11 @@ async def play(ctx: commands.Context, *, query: str):
     if not ctx.author.voice:
         return await ctx.send("🐸 Entra em um canal de voz primeiro!")
 
+    # Obtém o player existente ou conecta-se ao canal de voz do autor
+    # Certifica-se de que há um nó conectado antes de tentar obter o player
+    if not wavelink.NodePool.nodes:
+        return await ctx.send("❌ Nenhum nó Lavalink conectado. Por favor, aguarde ou verifique a configuração.")
+
     player: wavelink.Player = ctx.voice_client
     if not player:
         try:
@@ -53,8 +62,9 @@ async def play(ctx: commands.Context, *, query: str):
             return await ctx.send(f"❌ Não foi possível conectar ao canal de voz: {e}")
 
     if player.is_playing():
-        return await ctx.send("🎵 Já estou tocando algo! Use `!stop` para parar a música atual.")
+        return await ctx.send("🎵 Já estou tocando algo! Use `?stop` para parar a música atual.") # Atualizado para o novo prefixo
 
+    # Pesquisa a faixa. Em wavelink v3, usa wavelink.Track.search
     tracks = await wavelink.Track.search(query)
 
     if not tracks:
