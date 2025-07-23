@@ -3,13 +3,14 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-import yt_dlp # NEW
-from collections import deque # NEW
-import asyncio # NEW
+import yt_dlp
+from collections import deque
+import asyncio
 
 # Environment variables for tokens and other sensitive data
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN") # Alterado para DISCORD_TOKEN para consistência
+# CORREÇÃO: Alterado para buscar a variável de ambiente "TOKEN"
+TOKEN = os.getenv("TOKEN") 
 
 # Create the structure for queueing songs - Dictionary of queues
 SONG_QUEUES = {}
