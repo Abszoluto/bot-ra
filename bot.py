@@ -42,6 +42,12 @@ YTDL_OPTIONS = {
     "referer": "https://www.youtube.com/", # Define um referer para a requisição
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", # Simula um user-agent de navegador
     "extract_flat": True, # Não extrai informações de playlists, apenas URLs
+    # NOVAS OPÇÕES ADICIONADAS PARA TENTAR MITIGAR A DETECÇÃO DE BOT
+    "no_check_certificate": True, # Não verifica certificados SSL (pode ser útil em alguns ambientes)
+    "force_ipv4": True, # Força o uso de IPv4, às vezes IPs de data center são mais facilmente bloqueados
+    "sleep_interval_requests": 1, # Adiciona um pequeno atraso entre requisições (em segundos)
+    "retries": 5, # Tenta novamente em caso de falha de rede
+    "fragment_retries": 5, # Tenta novamente em caso de falha de fragmento
 }
 
 # Opções do FFmpeg para processamento de áudio
@@ -331,27 +337,30 @@ async def volume(interaction: discord.Interaction, volume: int):
     if not 0 <= volume <= 100:
         return await interaction.response.send_message("O volume deve ser entre 0 e 100.")
 
-    voice_client.source.volume = volume / 100.0
-    await interaction.response.send_message(f"🔊 Volume ajustado para {volume}%.")
+    # Verifica se há uma fonte de áudio ativa para ajustar o volume
+    if voice_client.source:
+        voice_client.source.volume = volume / 100.0
+        await interaction.response.send_message(f"🔊 Volume ajustado para {volume}%.")
+    else:
+        await interaction.response.send_message("Não há música tocando para ajustar o volume.")
 
 
 @bot.tree.command(name="loop", description="Ativa/desativa o loop da música atual ou da fila.")
-@app_commands.describe(mode="Modo de loop: 'current' (música atual), 'queue' (fila), 'off' (desativar)")
+@app_commands.describe(mode="Modo de loop: 'current' (música atual), 'off' (desativar)")
 async def loop(interaction: discord.Interaction, mode: str):
     guild_id_str = str(interaction.guild_id)
-    # Por simplicidade, vamos implementar apenas loop da música atual ou desativar.
-    # Loop de fila exigiria um controle mais complexo do deque.
-
-    if mode.lower() not in ["current", "off"]:
-        return await interaction.response.send_message("Modo de loop inválido. Use 'current' ou 'off'.")
-
-    # Não há um mecanismo de loop embutido no discord.py para FFmpegOpusAudio.
-    # Para loop, precisaríamos re-adicionar a música à fila ou recriar a fonte.
-    # Para este exemplo, vamos simplificar e focar em loop "manual" da música atual.
     
-    # Se o loop da música atual for ativado, a música não será removida da fila.
-    # Isso é uma simplificação, um loop real exigiria um controle mais granular.
-    await interaction.response.send_message("Este comando está em desenvolvimento. Por favor, use o `/play` para adicionar músicas novamente.")
+    if mode.lower() == "current":
+        # Para implementar loop da música atual, precisamos garantir que a música não seja removida da fila
+        # e seja adicionada de volta ao início da fila após terminar.
+        # Isso exigiria modificar a lógica de `play_next_song` ou a fila.
+        # Por simplicidade e para evitar complexidade excessiva com o `deque`,
+        # vamos manter a sugestão de re-adicionar manualmente por enquanto.
+        await interaction.response.send_message("O loop da música atual não está totalmente implementado para este bot. Por favor, use `/play` para adicionar a música novamente se desejar repeti-la.")
+    elif mode.lower() == "off":
+        await interaction.response.send_message("Loop desativado.")
+    else:
+        await interaction.response.send_message("Modo de loop inválido. Use 'current' ou 'off'.")
 
 
 @bot.tree.command(name="remove", description="Remove uma música da fila pelo número.")
@@ -366,8 +375,11 @@ async def remove(interaction: discord.Interaction, number: int):
         await interaction.response.send_message("Número da música inválido na fila.")
         return
 
-    removed_song = SONG_QUEUES[guild_id_str].pop(number - 1)
-    await interaction.response.send_message(f"🗑️ Removido da fila: **{removed_song[1]}**.")
+    try:
+        removed_song = SONG_QUEUES[guild_id_str].pop(number - 1)
+        await interaction.response.send_message(f"🗑️ Removido da fila: **{removed_song[1]}**.")
+    except IndexError: # Caso a fila seja modificada entre a verificação e a remoção
+        await interaction.response.send_message("Erro ao remover a música. A fila pode ter sido alterada.")
 
 
 # Inicia o bot com o TOKEN
