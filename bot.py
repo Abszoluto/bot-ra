@@ -9,68 +9,39 @@ import logging
 from collections import deque
 
 # --- Configuração Inicial ---
-
-# Configuração de logging para melhor depuração
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('discord_music_bot')
-
-# Carrega variáveis de ambiente de um arquivo .env (ótimo para desenvolvimento local)
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 LAVALINK_HOST = os.getenv("LAVALINK_HOST")
 LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD")
 LAVALINK_PORT = os.getenv("LAVALINK_PORT")
-
-# Configuração das intents (permissões) do bot
 intents = discord.Intents.default()
 intents.message_content = True
-intents.voice_states = True # Essencial para interagir com canais de voz
-
+intents.voice_states = True
 
 # --- Classe Principal do Bot ---
-
 class MusicBot(commands.Bot):
     def __init__(self):
-        # Inicializa o bot com prefixo (para comandos de texto, se houver) e intents
         super().__init__(command_prefix="!", intents=intents)
-        # Armazena as filas e timers como atributos da instância do bot, não como globais
         self.song_queues = {}
         self.inactivity_timers = {}
 
     async def setup_hook(self) -> None:
-        """
-        Este método é chamado uma vez para configurar o bot antes de logar.
-        Ideal para carregar extensões, sincronizar comandos e inicializar conexões.
-        """
-        # Sincroniza os comandos de barra com o Discord
         await self.tree.sync()
         logger.info("Comandos de barra (/) sincronizados!")
-
-        # Conecta ao servidor Lavalink
         try:
-            # Garante que as variáveis de ambiente foram carregadas
             if not all([LAVALINK_HOST, LAVALINK_PORT, LAVALINK_PASSWORD]):
                 logger.error("Uma ou mais variáveis de ambiente do Lavalink não foram definidas!")
                 return
-
-            node = wavelink.Node(
-                uri=f"http://{LAVALINK_HOST}:{int(LAVALINK_PORT)}",
-                password=LAVALINK_PASSWORD
-            )
+            node = wavelink.Node(uri=f"http://{LAVALINK_HOST}:{int(LAVALINK_PORT)}", password=LAVALINK_PASSWORD)
             await wavelink.Pool.connect(client=self, nodes=[node])
-        
         except Exception as e:
             logger.error(f"❌ Falha fatal ao conectar ao Lavalink: {e}")
-            logger.error("Verifique se as variáveis de ambiente e o serviço Lavalink estão corretos na Railway.")
-
-    # --- Métodos de Lógica Interna (antigas funções auxiliares) ---
 
     async def play_next_song(self, player: wavelink.Player, guild_id: int, channel: discord.TextChannel):
-        """Reproduz a próxima música na fila ou desconecta se a fila estiver vazia."""
         if not player or not player.is_connected():
-            logger.info(f"Bot desconectado da guilda {guild_id}. Limpando fila.")
-            if guild_id in self.song_queues:
-                self.song_queues[guild_id].clear()
+            if guild_id in self.song_queues: self.song_queues[guild_id].clear()
             return
 
         if self.song_queues.get(guild_id):
@@ -78,39 +49,29 @@ class MusicBot(commands.Bot):
             try:
                 await player.play(track)
                 await channel.send(f"▶️ Tocando agora: **{track.title}** por **{track.author}**")
-                self.start_inactivity_timer(guild_id, player) # Reinicia o timer
+                self.start_inactivity_timer(guild_id, player)
             except Exception as e:
                 logger.error(f"Erro ao tocar '{track.title}': {e}")
                 await channel.send(f"❌ Erro ao tocar **{track.title}**. Pulando para a próxima.")
                 await self.play_next_song(player, guild_id, channel)
         else:
-            logger.info(f"Fila vazia para a guilda {guild_id}. Iniciando temporizador de desconexão.")
             self.start_inactivity_timer(guild_id, player)
 
     def start_inactivity_timer(self, guild_id: int, player: wavelink.Player):
-        """Inicia ou reinicia o temporizador de desconexão por inatividade."""
         self.stop_inactivity_timer(guild_id)
-        
         async def disconnect_after_inactivity():
-            await asyncio.sleep(300) # 5 minutos
+            await asyncio.sleep(300)
             if player and player.is_connected() and not player.is_playing() and not self.song_queues.get(guild_id):
-                logger.info(f"Desconectando da guilda {guild_id} por inatividade.")
                 await player.disconnect()
                 if guild_id in self.song_queues: del self.song_queues[guild_id]
                 if guild_id in self.inactivity_timers: del self.inactivity_timers[guild_id]
-
         task = self.loop.create_task(disconnect_after_inactivity())
         self.inactivity_timers[guild_id] = task
-        logger.info(f"Temporizador de inatividade iniciado para a guilda {guild_id}.")
 
     def stop_inactivity_timer(self, guild_id: int):
-        """Para o temporizador de desconexão por inatividade."""
         if guild_id in self.inactivity_timers:
             self.inactivity_timers[guild_id].cancel()
             del self.inactivity_timers[guild_id]
-            logger.info(f"Temporizador de inatividade parado para a guilda {guild_id}.")
-
-    # --- Eventos do Bot ---
 
     async def on_ready(self):
         logger.info(f"🤖 {self.user} está online e pronto!")
@@ -121,28 +82,20 @@ class MusicBot(commands.Bot):
 
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
         player = payload.player
-        reason = payload.reason
-        if reason.should_play_next():
-            text_channel = player.channel
-            if text_channel:
-                 await self.play_next_song(player, player.guild.id, text_channel)
+        if payload.reason.should_play_next():
+            if player.channel:
+                 await self.play_next_song(player, player.guild.id, player.channel)
     
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         if member.bot: return
-
         player: wavelink.Player = member.guild.voice_client
         if not player or not before.channel: return
-
         if len(before.channel.members) == 1 and self.user in before.channel.members:
-            logger.info(f"Bot ficou sozinho no canal {before.channel.name}. Iniciando timer de desconexão.")
             self.start_inactivity_timer(member.guild.id, player)
-        
         elif after.channel == player.channel and self.user in after.channel.members:
             if member.guild.id in self.inactivity_timers:
-                logger.info(f"{member.name} entrou no canal. Parando timer de inatividade.")
                 self.stop_inactivity_timer(member.guild.id)
 
-# Inicializa a instância do bot
 bot = MusicBot()
 
 # --- Comandos de Barra (Slash Commands) ---
@@ -156,41 +109,39 @@ async def play(interaction: discord.Interaction, query: str):
         await interaction.followup.send("Você precisa estar em um canal de voz para usar este comando.")
         return
 
-    player: wavelink.Player
-    try:
-        player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
-    except discord.ClientException:
-        player = interaction.guild.voice_client
+    # -----------> INÍCIO DA CORREÇÃO <-----------
+    # Lógica de conexão e movimento do player foi reescrita para ser mais robusta
+    player: wavelink.Player = interaction.guild.voice_client
+    user_voice_channel = interaction.user.voice.channel
 
-    if not player:
-        await interaction.followup.send("Não foi possível conectar ao canal de voz.")
+    try:
+        if not player:
+            # Se não houver player, conecta ao canal do usuário
+            player = await user_voice_channel.connect(cls=wavelink.Player)
+        elif player.channel != user_voice_channel:
+            # Se o player estiver em outro canal, move para o canal do usuário
+            await player.move_to(user_voice_channel)
+    except (asyncio.TimeoutError, wavelink.exceptions.ChannelTimeoutException):
+        await interaction.followup.send("❌ Não foi possível conectar ao canal de voz (timeout). Tente novamente.")
         return
-        
-    if player.channel != interaction.user.voice.channel:
-        await player.move_to(interaction.user.voice.channel)
+    # -----------> FIM DA CORREÇÃO <-----------
     
     player.channel = interaction.channel
     interaction.client.stop_inactivity_timer(interaction.guild_id)
 
-    # -----------> INÍCIO DA CORREÇÃO <-----------
     try:
-        # Usamos `search` que retorna um objeto de pesquisa mais versátil
         tracks: wavelink.Search = await wavelink.Playable.search(query)
         if not tracks:
             await interaction.followup.send(f"❌ Nenhuma música encontrada para '{query}'.")
             return
-    except wavelink.LavalinkLoadException as e:
-        logger.error(f"Erro do Lavalink ao buscar a música: {e}")
-        await interaction.followup.send("❌ Ocorreu um erro ao tentar buscar a música. Verifique os logs do Lavalink.")
+    except wavelink.LavalinkLoadException:
+        await interaction.followup.send("❌ Ocorreu um erro ao tentar buscar a música. O serviço de música pode estar sobrecarregado. Tente novamente.")
         return
     except Exception as e:
         logger.error(f"Um erro inesperado ocorreu durante a busca: {e}")
         await interaction.followup.send("❌ Um erro inesperado ocorreu. Tente novamente.")
         return
-    # -----------> FIM DA CORREÇÃO <-----------
 
-    # `search` pode retornar uma lista (playlist) ou um único resultado.
-    # Vamos pegar o primeiro resultado para simplificar.
     track = tracks[0]
     
     guild_id = interaction.guild_id
@@ -205,6 +156,8 @@ async def play(interaction: discord.Interaction, query: str):
         await interaction.followup.send(f"Buscando: **{track.title}**...")
         await interaction.client.play_next_song(player, guild_id, interaction.channel)
 
+
+# ... (restante dos comandos: skip, pause, resume, etc., permanecem os mesmos) ...
 
 @bot.tree.command(name="skip", description="Pula a música atual.")
 async def skip(interaction: discord.Interaction):
@@ -253,7 +206,7 @@ async def queue(interaction: discord.Interaction):
     
     embed = discord.Embed(title="Fila de Músicas", color=discord.Color.blue())
     queue_text = ""
-    for i, track in enumerate(list(queue)[:10]): # Mostra até 10 músicas
+    for i, track in enumerate(list(queue)[:10]):
         queue_text += f"**{i+1}.** {track.title} - `{track.author}`\n"
     
     embed.description = queue_text
@@ -275,7 +228,6 @@ async def volume(interaction: discord.Interaction, level: int):
     await interaction.response.send_message(f"🔊 Volume ajustado para {level}%.")
 
 # --- Execução do Bot ---
-
 if __name__ == "__main__":
     if TOKEN is None:
         logger.error("O token do Discord não foi encontrado. Certifique-se de que a variável de ambiente 'TOKEN' está definida.")
