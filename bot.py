@@ -40,8 +40,7 @@ async def on_ready():
     try:
         node = wavelink.Node(
             uri=f"https://{LAVALINK_HOST}",  # sem porta aqui!
-            password=LAVALINK_PASSWORD,
-            secure=True,  # SSL é obrigatório para Railway (https)
+            password=LAVALINK_PASSWORD
         )
         await wavelink.Pool.connect(client=bot, nodes=[node])
         print(f"✅ Conectado ao Lavalink em {LAVALINK_HOST}")
