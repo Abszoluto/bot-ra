@@ -11,6 +11,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 TOKEN = os.getenv("TOKEN")
 LAVALINK_HOST = os.getenv("LAVALINK_HOST") # Será o nome do serviço do Lavalink no Railway
 LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD")
+LAVALINK_PORT = os.getenv("LAVALINK_PORT") # Adicione esta linha para pegar a porta
 
 @bot.event
 async def on_ready():
@@ -22,6 +23,7 @@ async def on_ready():
     try:
         # Em wavelink v3, wavelink.Node é usado para criar um nó.
         # Para comunicação interna no Railway, use HTTP e a porta definida.
+        # Use o nome do serviço Lavalink como host e a porta interna.
         node = wavelink.Node(
             uri=f"http://{LAVALINK_HOST}:{LAVALINK_PORT}", # URI completa para o servidor Lavalink interno
             password=LAVALINK_PASSWORD,
@@ -34,20 +36,6 @@ async def on_ready():
         print("Certifique-se de que as variáveis de ambiente LAVALINK_HOST, LAVALINK_PORT e LAVALINK_PASSWORD estão corretas.")
         print("Verifique também se o serviço Lavalink está rodando e acessível no Railway.")
 
-@bot.event
-async def on_ready():
-    print(f"🤖 Rã está online como {bot.user}")
-    try:
-        node = wavelink.Node(
-            uri=f"https://{LAVALINK_HOST}",  # sem porta aqui!
-            password=LAVALINK_PASSWORD
-        )
-        await wavelink.Pool.connect(client=bot, nodes=[node])
-        print(f"✅ Conectado ao Lavalink em {LAVALINK_HOST}")
-    except Exception as e:
-        print(f"❌ Erro ao conectar ao Lavalink: {e}")
-
-
 @bot.command()
 async def play(ctx: commands.Context, *, query: str):
     """
@@ -57,8 +45,6 @@ async def play(ctx: commands.Context, *, query: str):
     if not ctx.author.voice:
         return await ctx.send("🐸 Entra em um canal de voz primeiro!")
 
-    # Conecta-se ao canal de voz do autor, se ainda não estiver conectado
-    # ou obtém o player existente.
     player: wavelink.Player = ctx.voice_client
     if not player:
         try:
@@ -69,7 +55,6 @@ async def play(ctx: commands.Context, *, query: str):
     if player.is_playing():
         return await ctx.send("🎵 Já estou tocando algo! Use `!stop` para parar a música atual.")
 
-    # Pesquisa a faixa. Em wavelink v3, usa wavelink.Track.search
     tracks = await wavelink.Track.search(query)
 
     if not tracks:
